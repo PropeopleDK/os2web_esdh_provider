@@ -53,19 +53,6 @@ function os2web_esdh_provider_menu() {
 }
 
 /**
- * Implements hook_FORM_alter().
- */
-function os2web_esdh_provider_form_os2web_settings_settings_form_alter(&$form, &$form_state) {
-  // MM configuration.
-  $form['meetings']['os2web_meetings_import_service_ip'] = array(
-    '#type' => 'textfield',
-    '#title' => 'IP addresser der kan udløse import',
-    '#description' => 'Komma separeret liste af ip-addresser der kan tilgå <em>admin/os2web/import/<ID></em>.',
-    '#default_value' => variable_get('os2web_meetings_import_service_ip', ip_address()),
-  );
-}
-
-/**
  * Implements hook_ctools_plugin_type().
  */
 function os2web_esdh_provider_ctools_plugin_type() {
@@ -131,7 +118,7 @@ function _os2web_esdh_provider_import_access() {
  */
 function os2web_esdh_provider_node_delete($node) {
   if ($node->type === 'os2web_meetings_meeting') {
-    // Remove any addenums relating to this node.
+    // Remove any addendums relating to this node.
     $query = new EntityFieldQuery();
     $result = $query->entityCondition('entity_type', 'node')
       ->propertyCondition('type', 'os2web_meetings_meeting')
@@ -144,7 +131,7 @@ function os2web_esdh_provider_node_delete($node) {
         node_delete($add_node->nid);
       }
     }
-    //Delete bullets from meeting.
+    // Delete bullets from meeting.
     $items = array_shift($node->field_os2web_meetings_bullets);
     if (is_array($items)) {
       foreach ($items as $nids) {
@@ -169,10 +156,15 @@ function os2web_esdh_provider_node_delete($node) {
  * Will run import on every cron.
  */
 function os2web_esdh_provider_cron() {
+  if (variable_get('os2web_esdh_provider_queue_enabled', FALSE)) {
+    return;
+  }
+
   if (os2web_esdh_provider_has_api('mm')) {
+    $meetings = os2web_esdh_provider_invoke('mm', 'get_import_list');
+
     $queue = DrupalQueue::get('acadre_mm_import');
     if ($queue->numberOfItems() == 0) {
-      $meetings = os2web_esdh_provider_invoke('mm', 'get_import_list');
       $current_timestamp = time();
       $last_mm_import_time = variable_get('os2web_esdh_provider_last_mm_import', FALSE);
 
@@ -189,9 +181,38 @@ function os2web_esdh_provider_cron() {
 }
 
 /**
+ * Worker function that queues meetings for external import.
+ */
+function os2web_esdh_provider_queue_meetings() {
+  if (os2web_esdh_provider_has_api('mm')) {
+    $meetings = os2web_esdh_provider_invoke('mm', 'get_import_list');
+
+    $last_mm_import_time = variable_get('os2web_esdh_provider_last_mm_import', FALSE);
+
+    $queue = DrupalQueue::get('acadre_mm_import');
+
+    foreach ($meetings as $meeting) {
+      // Only import files newer than last cron job.
+      if (!$last_mm_import_time || filemtime($meeting['uri']) > $last_mm_import_time) {
+        $queue->createItem(array('meeting' => $meeting, 'force' => FALSE));
+      }
+    }
+    $queue->createItem(array('post_import_process' => TRUE));
+
+    variable_set('os2web_esdh_provider_last_mm_import', time());
+  }
+}
+
+/**
  * Implements hook_cron_queue_info().
  */
 function os2web_esdh_provider_cron_queue_info() {
+  // If the external queue handler is enabled, don't let
+  // drupals cron import the meetings.
+  if (variable_get('os2web_esdh_provider_queue_enabled', FALSE)) {
+    return array();
+  }
+
   $queues['acadre_mm_import'] = array(
     'worker callback' => '_os2web_esdh_provider_cron_queue_worker',
     'time' => 30,
@@ -551,4 +572,11 @@ function o2web_esdh_provider_os2web_help($sections) {
   $sections['import'] = t('<b>Meeting Import:</b> Import meetings trough the esdh provider. Press the [Run Import] at the <a href="@url" target="_blank">ESDH page</a>.', array('@url' => url('admin/config/os2web/esdh_provider')));
 
   return $sections;
+}
+
+/**
+* Implements hook_query_TAG_alter()
+*/
+function o2web_esdh_provider_query_efq_debug_alter(QueryAlterableInterface $query) {
+    error_log("Test 1");
 }
